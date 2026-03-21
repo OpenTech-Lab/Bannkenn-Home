@@ -1,0 +1,35 @@
+version: '3.9'
+
+services:
+  device-monitor:
+    build:
+      context: ./device-monitor
+      dockerfile: Dockerfile
+    container_name: device-monitor
+    restart: unless-stopped
+
+    # Required for ARP scan and raw packet capture
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    environment:
+      - INTERFACE=${INTERFACE:-eth0}
+      - SUBNET=${SUBNET:-192.168.1.0/24}
+      - PORT=8080
+      - GEO_DATA_DIR=/data
+      - SCAN_INTERVAL=${SCAN_INTERVAL:-30}
+      - LABELS_FILE=/data/labels.json
+      - RUST_LOG=device_monitor=info,warn
+
+    volumes:
+      # MMDB geo databases + labels.json (rw so labels persist)
+      - ./device-monitor/data:/data
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
