@@ -5,6 +5,7 @@ services:
     build:
       context: ./device-monitor
       dockerfile: Dockerfile
+      network: host
     container_name: device-monitor
     restart: unless-stopped
 

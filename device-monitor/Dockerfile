@@ -20,14 +20,14 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y \
     libpcap0.8 \
     ca-certificates \
+    libcap2-bin \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -r -u 1001 monitor
 COPY --from=builder /app/target/release/device-monitor /usr/local/bin/device-monitor
 
 # Give NET_RAW capability to binary so it can run without root
-RUN apt-get update && apt-get install -y libcap2-bin && rm -rf /var/lib/apt/lists/* \
-    && setcap cap_net_raw,cap_net_admin=eip /usr/local/bin/device-monitor
+RUN setcap cap_net_raw,cap_net_admin=eip /usr/local/bin/device-monitor
 
 USER monitor
 EXPOSE 8080
