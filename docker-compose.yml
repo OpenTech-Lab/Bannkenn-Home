@@ -2,10 +2,7 @@ version: '3.9'
 
 services:
   device-monitor:
-    build:
-      context: ./device-monitor
-      dockerfile: Dockerfile
-      network: host
+    image: toyofumi111/bannkenn-home:latest
     container_name: device-monitor
     restart: unless-stopped
 

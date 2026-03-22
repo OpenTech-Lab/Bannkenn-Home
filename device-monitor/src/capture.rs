@@ -107,6 +107,7 @@ fn process_packet(data: &[u8], flows: &FlowMap, alert_tx: &AlertSender) {
                         packet_count: 0,
                         first_seen: Utc::now(),
                         last_seen: Utc::now(),
+                        payload_snippet: None,
                     },
                     Instant::now(),
                 )
@@ -116,6 +117,13 @@ fn process_packet(data: &[u8], flows: &FlowMap, alert_tx: &AlertSender) {
             stats.total_bytes += pkt_len;
             stats.packet_count += 1;
             stats.last_seen = Utc::now();
+            if stats.payload_snippet.is_none() {
+                let p = tcp.payload();
+                if !p.is_empty() {
+                    let chunk = &p[..p.len().min(256)];
+                    stats.payload_snippet = Some(chunk.iter().map(|b| format!("{:02x}", b)).collect());
+                }
+            }
 
             if is_syn {
                 if window_start.elapsed() > Duration::from_secs(30) {
@@ -159,6 +167,7 @@ fn process_packet(data: &[u8], flows: &FlowMap, alert_tx: &AlertSender) {
                         packet_count: 0,
                         first_seen: Utc::now(),
                         last_seen: Utc::now(),
+                        payload_snippet: None,
                     },
                     Instant::now(),
                 )
@@ -167,6 +176,13 @@ fn process_packet(data: &[u8], flows: &FlowMap, alert_tx: &AlertSender) {
             stats.total_bytes += pkt_len;
             stats.packet_count += 1;
             stats.last_seen = Utc::now();
+            if stats.payload_snippet.is_none() {
+                let p = udp.payload();
+                if !p.is_empty() {
+                    let chunk = &p[..p.len().min(256)];
+                    stats.payload_snippet = Some(chunk.iter().map(|b| format!("{:02x}", b)).collect());
+                }
+            }
         }
         _ => {}
     }

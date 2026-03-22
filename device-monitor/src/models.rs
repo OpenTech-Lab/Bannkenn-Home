@@ -36,6 +36,9 @@ pub struct FlowStats {
     pub packet_count: u64,
     pub first_seen: DateTime<Utc>,
     pub last_seen: DateTime<Utc>,
+    /// Hex-encoded bytes of the first non-empty application-layer payload seen
+    /// for this flow (up to 256 bytes). None if no payload has appeared yet.
+    pub payload_snippet: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

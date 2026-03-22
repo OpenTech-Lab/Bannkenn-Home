@@ -83,14 +83,15 @@ async fn list_flows(State(s): State<AppState>) -> Json<Value> {
         let src_geo = enrich(&s.geo.lookup(&stats.key.src_ip, &devices), &stats.key.src_ip, &devices, &labels);
         let dst_geo = enrich(&s.geo.lookup(&stats.key.dst_ip, &devices), &stats.key.dst_ip, &devices, &labels);
         json!({
-            "key":          stats.key,
-            "syn_count":    stats.syn_count,
-            "total_bytes":  stats.total_bytes,
-            "packet_count": stats.packet_count,
-            "first_seen":   stats.first_seen,
-            "last_seen":    stats.last_seen,
-            "src_geo":      src_geo,
-            "dst_geo":      dst_geo,
+            "key":             stats.key,
+            "syn_count":       stats.syn_count,
+            "total_bytes":     stats.total_bytes,
+            "packet_count":    stats.packet_count,
+            "first_seen":      stats.first_seen,
+            "last_seen":       stats.last_seen,
+            "src_geo":         src_geo,
+            "dst_geo":         dst_geo,
+            "payload_snippet": stats.payload_snippet,
         })
     }).collect();
     Json(json!({ "count": flows.len(), "flows": flows }))
@@ -222,10 +223,11 @@ static DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
     .mac{font-family:'Courier New',monospace;color:var(--muted);font-size:.78rem}
     .hostname{font-weight:500}
     .sub{font-size:.78rem;color:var(--muted);margin-top:2px}
-    .geo-cell{line-height:1.6}
-    .geo-country{font-size:.82rem}
-    .geo-asn{font-size:.75rem;color:var(--muted)}
-    .geo-device{font-size:.82rem;color:var(--green)}
+    .geo-info-cell{font-size:.8rem;line-height:1.6;min-width:120px;max-width:200px}
+    .geo-country{white-space:nowrap}
+    .geo-asn{color:var(--muted);font-size:.75rem;white-space:nowrap}
+    .geo-device{color:var(--green);white-space:nowrap}
+    .geo-none{color:var(--muted)}
     td.ports{white-space:normal;min-width:140px}
     td.nowrap{white-space:nowrap}
 
@@ -234,6 +236,44 @@ static DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
     .dot-online{background:var(--green)}
     .dot-recent{background:var(--yellow)}
     .dot-offline{background:#484f58}
+
+    /* payload column */
+    .payload-cell{max-width:200px;white-space:nowrap}
+    .payload-preview{
+      font-family:'Courier New',monospace;font-size:.75rem;color:var(--muted);
+      display:inline-block;max-width:140px;overflow:hidden;
+      text-overflow:ellipsis;vertical-align:middle;
+    }
+    .payload-view-btn{
+      background:none;border:none;cursor:pointer;color:var(--accent);
+      font-size:.8rem;padding:0 3px;vertical-align:middle;opacity:.6;line-height:1;
+    }
+    .payload-view-btn:hover{opacity:1}
+
+    /* payload modal */
+    #payload-modal{
+      display:none;position:fixed;inset:0;z-index:200;
+      align-items:center;justify-content:center;
+    }
+    .payload-modal-box{
+      position:relative;background:var(--surface);border:1px solid var(--border);
+      border-radius:12px;padding:24px;width:680px;max-width:94vw;max-height:82vh;
+      display:flex;flex-direction:column;gap:14px;z-index:1;
+    }
+    .payload-modal-header{display:flex;justify-content:space-between;align-items:center}
+    .payload-modal-header h3{font-size:1rem;font-weight:600}
+    .payload-close-btn{
+      background:none;border:none;color:var(--muted);cursor:pointer;
+      font-size:1.1rem;padding:0 2px;line-height:1;
+    }
+    .payload-close-btn:hover{color:var(--text)}
+    .payload-flow-label{font-size:.78rem;color:var(--muted);font-family:'Courier New',monospace}
+    .hex-dump{
+      font-family:'Courier New',monospace;font-size:.78rem;white-space:pre;
+      color:#e6edf3;background:#0d1117;border:1px solid var(--border);
+      border-radius:6px;padding:14px;overflow:auto;
+      flex:1;min-height:120px;max-height:calc(82vh - 140px);
+    }
 
     /* label badge + btn */
     .label-badge{
@@ -312,6 +352,19 @@ static DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
   </div>
 </div>
 
+<!-- Payload Modal -->
+<div id="payload-modal">
+  <div class="modal-backdrop" onclick="closePayloadModal()"></div>
+  <div class="payload-modal-box">
+    <div class="payload-modal-header">
+      <h3>Packet Payload</h3>
+      <button class="payload-close-btn" onclick="closePayloadModal()">✕</button>
+    </div>
+    <div class="payload-flow-label" id="payload-flow-label"></div>
+    <pre class="hex-dump" id="payload-hex-dump"></pre>
+  </div>
+</div>
+
 <header>
   <div class="pulse" id="pulse"></div>
   <h1>Device Monitor</h1>
@@ -355,6 +408,44 @@ static DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
   }
   function closeModal() { document.getElementById('label-modal').style.display = 'none'; }
 
+  // ── payload modal ──────────────────────────────────────────────────────────
+  function htmlEsc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function hexDump(hex) {
+    if (!hex) return '(no payload captured)';
+    const bytes = [];
+    for (let i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.substr(i, 2), 16));
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 16) {
+      const chunk   = bytes.slice(i, i + 16);
+      const addr    = i.toString(16).padStart(4, '0');
+      const hexPart = chunk.map(b => b.toString(16).padStart(2,'0')).join(' ').padEnd(47, ' ');
+      const ascii   = chunk.map(b => (b >= 0x20 && b < 0x7f) ? String.fromCharCode(b) : '.').join('');
+      out += `${addr}  ${hexPart}  ${ascii}\n`;
+    }
+    return out;
+  }
+
+  function renderPayloadPreview(hex) {
+    if (!hex) return '<span class="geo-none">—</span>';
+    const bytes = [];
+    for (let i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.substr(i, 2), 16));
+    const ascii   = bytes.map(b => (b >= 0x20 && b < 0x7f) ? String.fromCharCode(b) : '.').join('');
+    const preview = ascii.length > 30 ? ascii.slice(0, 30) + '…' : ascii;
+    return `<span class="payload-preview" title="${htmlEsc(ascii)}">${htmlEsc(preview)}</span>`
+         + `<button class="payload-view-btn" title="View full payload" onclick="showPayload('${hex}','')">&#x229A;</button>`;
+  }
+
+  function showPayload(hex, label) {
+    document.getElementById('payload-hex-dump').textContent = hexDump(hex);
+    document.getElementById('payload-flow-label').textContent = label || '';
+    document.getElementById('payload-modal').style.display = 'flex';
+  }
+
+  function closePayloadModal() { document.getElementById('payload-modal').style.display = 'none'; }
+
   async function saveLabel() {
     const name = document.getElementById('m-name').value.trim();
     if (!name) return;
@@ -397,20 +488,21 @@ static DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
     return `<button class="tag-btn" onclick="openModal('${ip}','${esc(mac)}','','')">+ Tag</button>`;
   }
 
-  function renderGeo(geo, ip, port) {
-    if (!geo) return `<span class="ip">${ip}:${port}</span>`;
-    const portStr = `<span class="ip">${ip}:${port}</span>`;
+  function renderGeoIp(geo, ip, port) {
+    return `<span class="ip">${ip}:${port}</span>`;
+  }
+
+  function renderGeoInfo(geo, ip) {
+    if (!geo) return '<span class="geo-none">—</span>';
     if (geo.is_private) {
       const name = geo.device_name || ip;
-      return `<div class="geo-cell">${portStr}<div class="geo-device">🏠 ${name}</div></div>`;
+      return `<span class="geo-device">🏠 ${name}</span>`;
     }
     const f = flag(geo.country_code);
     const country = geo.country_name || geo.country_code || '';
-    const asn = geo.asn_org ? `AS${geo.asn_number||''} ${geo.asn_org}` : '';
-    return `<div class="geo-cell">${portStr}
-      ${country ? `<div class="geo-country"><span>${f}</span> ${country}</div>` : ''}
-      ${asn     ? `<div class="geo-asn">${asn}</div>` : ''}
-    </div>`;
+    const asn = geo.asn_org ? `<span class="geo-asn">AS${geo.asn_number||''} ${geo.asn_org}</span>` : '';
+    const countryStr = country ? `<span class="geo-country">${f} ${country}</span>` : '';
+    return [countryStr, asn].filter(Boolean).join('<br>') || '<span class="geo-none">—</span>';
   }
 
   function esc(s) { return (s||'').replace(/'/g,"\\'"); }
@@ -494,11 +586,14 @@ static DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
       } else {
         const sorted = [...f.flows].sort((a,b)=>b.total_bytes-a.total_bytes).slice(0,50);
         fc.innerHTML = `<div class="table-wrap"><table>
-          <thead><tr><th>Proto</th><th>Source</th><th>Destination</th><th>Bytes</th><th>Pkts</th><th>Last Seen</th></tr></thead>
+          <thead><tr><th>Proto</th><th>Src IP</th><th>Src Info</th><th>Dst IP</th><th>Dst Info</th><th>Payload</th><th>Bytes</th><th>Pkts</th><th>Last Seen</th></tr></thead>
           <tbody>${sorted.map(fl=>`<tr>
             <td><span class="tag tag-${fl.key.protocol.toLowerCase()}">${fl.key.protocol}</span></td>
-            <td>${renderGeo(fl.src_geo, fl.key.src_ip, fl.key.src_port)}</td>
-            <td>${renderGeo(fl.dst_geo, fl.key.dst_ip, fl.key.dst_port)}</td>
+            <td class="nowrap">${renderGeoIp(fl.src_geo, fl.key.src_ip, fl.key.src_port)}</td>
+            <td class="geo-info-cell">${renderGeoInfo(fl.src_geo, fl.key.src_ip)}</td>
+            <td class="nowrap">${renderGeoIp(fl.dst_geo, fl.key.dst_ip, fl.key.dst_port)}</td>
+            <td class="geo-info-cell">${renderGeoInfo(fl.dst_geo, fl.key.dst_ip)}</td>
+            <td class="payload-cell">${renderPayloadPreview(fl.payload_snippet)}</td>
             <td class="nowrap">${fmt(fl.total_bytes)}</td>
             <td class="nowrap">${fmt(fl.packet_count)}</td>
             <td class="nowrap">${ts(fl.last_seen)}</td>
