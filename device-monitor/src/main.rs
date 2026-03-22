@@ -11,7 +11,7 @@ use tokio::sync::{broadcast, RwLock};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use api::{AppState, build_router, collect_alerts};
+use api::{build_router, collect_alerts, AppState};
 use capture::{evict_old_flows, new_flow_map, run_capture};
 use discovery::{new_device_map, run_scan_loop};
 use geo::GeoDb;
@@ -21,16 +21,15 @@ use labels::LabelStore;
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::from_default_env()
-                .add_directive("device_monitor=info".parse()?),
+            EnvFilter::from_default_env().add_directive("device_monitor=info".parse()?),
         )
         .init();
 
-    let interface     = std::env::var("INTERFACE").unwrap_or_else(|_| "eth0".into());
-    let subnet        = std::env::var("SUBNET").unwrap_or_else(|_| "192.168.1.0/24".into());
-    let geo_dir       = std::env::var("GEO_DATA_DIR").unwrap_or_else(|_| "/data".into());
-    let labels_file   = std::env::var("LABELS_FILE")
-        .unwrap_or_else(|_| format!("{}/labels.json", geo_dir));
+    let interface = std::env::var("INTERFACE").unwrap_or_else(|_| "eth0".into());
+    let subnet = std::env::var("SUBNET").unwrap_or_else(|_| "192.168.1.0/24".into());
+    let geo_dir = std::env::var("GEO_DATA_DIR").unwrap_or_else(|_| "/data".into());
+    let labels_file =
+        std::env::var("LABELS_FILE").unwrap_or_else(|_| format!("{}/labels.json", geo_dir));
     let scan_interval: u64 = std::env::var("SCAN_INTERVAL")
         .unwrap_or_else(|_| "30".into())
         .parse()
@@ -41,13 +40,16 @@ async fn main() -> Result<()> {
         .unwrap_or(8080);
 
     info!("Device Monitor starting...");
-    info!("Interface: {}  Subnet: {}  Scan interval: {}s", interface, subnet, scan_interval);
+    info!(
+        "Interface: {}  Subnet: {}  Scan interval: {}s",
+        interface, subnet, scan_interval
+    );
 
-    let geo    = Arc::new(GeoDb::load(&geo_dir));
+    let geo = Arc::new(GeoDb::load(&geo_dir));
     let labels = LabelStore::load(&labels_file);
 
-    let devices      = new_device_map();
-    let flows        = new_flow_map();
+    let devices = new_device_map();
+    let flows = new_flow_map();
     let alerts_store = Arc::new(RwLock::new(Vec::new()));
     let (alert_tx, alert_rx) = broadcast::channel::<models::Alert>(256);
 
@@ -80,7 +82,7 @@ async fn main() -> Result<()> {
         labels,
         scan_interval,
     };
-    let app  = build_router(state);
+    let app = build_router(state);
     let addr = format!("0.0.0.0:{}", port);
     info!("API listening on http://{}", addr);
     let listener = tokio::net::TcpListener::bind(&addr).await?;

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::Utc;
 use dashmap::DashMap;
 use etherparse::{NetSlice, SlicedPacket, TransportSlice};
@@ -30,23 +30,33 @@ pub async fn run_capture(
             .into_iter()
             .find(|d| d.name == interface_name);
 
-        let mut cap = match cap_device {
-            Some(dev) => Capture::from_device(dev)
-                .expect("open device")
-                .promisc(true)
-                .snaplen(65535)
-                .timeout(100)
-                .open()
-                .expect("open capture"),
-            None => {
-                warn!("Interface {} not found, trying 'any'", interface_name);
-                Capture::from_device("any")
-                    .expect("open any device")
+        let open_capture = || -> Result<Capture<pcap::Active>> {
+            match cap_device {
+                Some(dev) => Capture::from_device(dev)
+                    .context("open device")?
                     .promisc(true)
                     .snaplen(65535)
                     .timeout(100)
                     .open()
-                    .expect("open capture on any")
+                    .context("open capture"),
+                None => {
+                    warn!("Interface {} not found, trying 'any'", interface_name);
+                    Capture::from_device("any")
+                        .context("open any device")?
+                        .promisc(true)
+                        .snaplen(65535)
+                        .timeout(100)
+                        .open()
+                        .context("open capture on any")
+                }
+            }
+        };
+
+        let mut cap = match open_capture() {
+            Ok(cap) => cap,
+            Err(err) => {
+                warn!("Packet capture unavailable: {}", err);
+                return;
             }
         };
 
@@ -77,10 +87,7 @@ fn process_packet(data: &[u8], flows: &FlowMap, alert_tx: &AlertSender) {
     let (src_ip, dst_ip) = match &pkt.net {
         Some(NetSlice::Ipv4(ipv4)) => {
             let hdr = ipv4.header();
-            (
-                format_ip(hdr.source()),
-                format_ip(hdr.destination()),
-            )
+            (format_ip(hdr.source()), format_ip(hdr.destination()))
         }
         _ => return,
     };
@@ -121,7 +128,8 @@ fn process_packet(data: &[u8], flows: &FlowMap, alert_tx: &AlertSender) {
                 let p = tcp.payload();
                 if !p.is_empty() {
                     let chunk = &p[..p.len().min(256)];
-                    stats.payload_snippet = Some(chunk.iter().map(|b| format!("{:02x}", b)).collect());
+                    stats.payload_snippet =
+                        Some(chunk.iter().map(|b| format!("{:02x}", b)).collect());
                 }
             }
 
@@ -180,7 +188,8 @@ fn process_packet(data: &[u8], flows: &FlowMap, alert_tx: &AlertSender) {
                 let p = udp.payload();
                 if !p.is_empty() {
                     let chunk = &p[..p.len().min(256)];
-                    stats.payload_snippet = Some(chunk.iter().map(|b| format!("{:02x}", b)).collect());
+                    stats.payload_snippet =
+                        Some(chunk.iter().map(|b| format!("{:02x}", b)).collect());
                 }
             }
         }

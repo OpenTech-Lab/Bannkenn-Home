@@ -19,23 +19,23 @@ use crate::models::Alert;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub devices:       DeviceMap,
-    pub flows:         FlowMap,
-    pub alerts:        Arc<RwLock<Vec<Alert>>>,
-    pub geo:           Arc<GeoDb>,
-    pub labels:        Arc<LabelStore>,
+    pub devices: DeviceMap,
+    pub flows: FlowMap,
+    pub alerts: Arc<RwLock<Vec<Alert>>>,
+    pub geo: Arc<GeoDb>,
+    pub labels: Arc<LabelStore>,
     pub scan_interval: u64,
 }
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
-        .route("/",              get(dashboard))
-        .route("/health",        get(health))
-        .route("/devices",       get(list_devices))
-        .route("/flows",         get(list_flows))
-        .route("/alerts",        get(list_alerts))
-        .route("/labels",        get(list_labels).post(upsert_label))
-        .route("/labels/:id",    delete(del_label))
+        .route("/", get(dashboard))
+        .route("/health", get(health))
+        .route("/devices", get(list_devices))
+        .route("/flows", get(list_flows))
+        .route("/alerts", get(list_alerts))
+        .route("/labels", get(list_labels).post(upsert_label))
+        .route("/labels/:id", delete(del_label))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -52,48 +52,64 @@ async fn dashboard() -> Html<&'static str> {
 
 async fn list_devices(State(s): State<AppState>) -> Json<Value> {
     let devices = s.devices.read().await;
-    let labels  = s.labels.list().await;
-    let enriched: Vec<Value> = devices.iter().map(|dev| {
-        let ip  = dev.ip.to_string();
-        let mac = dev.mac.as_str();
-        let label = labels.iter().find(|l| {
-            l.ips.iter().any(|i| *i == ip)
-            || l.macs.iter().any(|m| m.eq_ignore_ascii_case(mac))
-        });
-        json!({
-            "ip":         dev.ip,
-            "mac":        dev.mac,
-            "hostname":   dev.hostname,
-            "vendor":     dev.vendor,
-            "open_ports": dev.open_ports,
-            "first_seen": dev.first_seen,
-            "last_seen":  dev.last_seen,
-            "label_id":   label.map(|l| &l.id),
-            "label_name": label.map(|l| &l.name),
+    let labels = s.labels.list().await;
+    let enriched: Vec<Value> = devices
+        .iter()
+        .map(|dev| {
+            let ip = dev.ip.to_string();
+            let mac = dev.mac.as_str();
+            let label = labels.iter().find(|l| {
+                l.ips.iter().any(|i| *i == ip) || l.macs.iter().any(|m| m.eq_ignore_ascii_case(mac))
+            });
+            json!({
+                "ip":         dev.ip,
+                "mac":        dev.mac,
+                "hostname":   dev.hostname,
+                "vendor":     dev.vendor,
+                "open_ports": dev.open_ports,
+                "first_seen": dev.first_seen,
+                "last_seen":  dev.last_seen,
+                "label_id":   label.map(|l| &l.id),
+                "label_name": label.map(|l| &l.name),
+            })
         })
-    }).collect();
+        .collect();
     Json(json!({ "count": enriched.len(), "devices": enriched }))
 }
 
 async fn list_flows(State(s): State<AppState>) -> Json<Value> {
     let devices = s.devices.read().await;
-    let labels  = s.labels.list().await;
-    let flows: Vec<Value> = s.flows.iter().map(|e| {
-        let stats = &e.value().0;
-        let src_geo = enrich(&s.geo.lookup(&stats.key.src_ip, &devices), &stats.key.src_ip, &devices, &labels);
-        let dst_geo = enrich(&s.geo.lookup(&stats.key.dst_ip, &devices), &stats.key.dst_ip, &devices, &labels);
-        json!({
-            "key":             stats.key,
-            "syn_count":       stats.syn_count,
-            "total_bytes":     stats.total_bytes,
-            "packet_count":    stats.packet_count,
-            "first_seen":      stats.first_seen,
-            "last_seen":       stats.last_seen,
-            "src_geo":         src_geo,
-            "dst_geo":         dst_geo,
-            "payload_snippet": stats.payload_snippet,
+    let labels = s.labels.list().await;
+    let flows: Vec<Value> = s
+        .flows
+        .iter()
+        .map(|e| {
+            let stats = &e.value().0;
+            let src_geo = enrich(
+                &s.geo.lookup(&stats.key.src_ip, &devices),
+                &stats.key.src_ip,
+                &devices,
+                &labels,
+            );
+            let dst_geo = enrich(
+                &s.geo.lookup(&stats.key.dst_ip, &devices),
+                &stats.key.dst_ip,
+                &devices,
+                &labels,
+            );
+            json!({
+                "key":             stats.key,
+                "syn_count":       stats.syn_count,
+                "total_bytes":     stats.total_bytes,
+                "packet_count":    stats.packet_count,
+                "first_seen":      stats.first_seen,
+                "last_seen":       stats.last_seen,
+                "src_geo":         src_geo,
+                "dst_geo":         dst_geo,
+                "payload_snippet": stats.payload_snippet,
+            })
         })
-    }).collect();
+        .collect();
     Json(json!({ "count": flows.len(), "flows": flows }))
 }
 
@@ -110,22 +126,19 @@ async fn list_labels(State(s): State<AppState>) -> Json<Value> {
 #[derive(Deserialize)]
 struct UpsertReq {
     name: String,
-    ip:   Option<String>,
-    mac:  Option<String>,
+    ip: Option<String>,
+    mac: Option<String>,
 }
 
-async fn upsert_label(
-    State(s): State<AppState>,
-    Json(body): Json<UpsertReq>,
-) -> Json<Value> {
-    let entry = s.labels.upsert(&body.name, body.ip.as_deref(), body.mac.as_deref()).await;
+async fn upsert_label(State(s): State<AppState>, Json(body): Json<UpsertReq>) -> Json<Value> {
+    let entry = s
+        .labels
+        .upsert(&body.name, body.ip.as_deref(), body.mac.as_deref())
+        .await;
     Json(json!(entry))
 }
 
-async fn del_label(
-    State(s): State<AppState>,
-    Path(id): Path<String>,
-) -> StatusCode {
+async fn del_label(State(s): State<AppState>, Path(id): Path<String>) -> StatusCode {
     if s.labels.delete(&id).await {
         StatusCode::NO_CONTENT
     } else {
@@ -141,7 +154,9 @@ pub async fn collect_alerts(mut rx: broadcast::Receiver<Alert>, store: Arc<RwLoc
             Ok(alert) => {
                 let mut alerts = store.write().await;
                 alerts.push(alert);
-                if alerts.len() > 1000 { alerts.drain(0..100); }
+                if alerts.len() > 1000 {
+                    alerts.drain(0..100);
+                }
             }
             Err(broadcast::error::RecvError::Closed) => break,
             Err(broadcast::error::RecvError::Lagged(n)) => {

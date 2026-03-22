@@ -147,7 +147,11 @@ impl LabelStore {
 }
 
 /// Sync helper to find a label name for an IP (using a pre-snapshotted list).
-pub fn find_label_name<'a>(labels: &'a [LabelEntry], ip: &str, mac: Option<&str>) -> Option<&'a str> {
+pub fn find_label_name<'a>(
+    labels: &'a [LabelEntry],
+    ip: &str,
+    mac: Option<&str>,
+) -> Option<&'a str> {
     labels
         .iter()
         .find(|e| {

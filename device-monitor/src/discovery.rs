@@ -22,14 +22,14 @@ pub fn new_device_map() -> DeviceMap {
 }
 
 const PROBE_PORTS: &[(u16, &str)] = &[
-    (22,   "SSH"),
-    (23,   "Telnet"),
-    (53,   "DNS"),
-    (80,   "HTTP"),
-    (443,  "HTTPS"),
-    (445,  "SMB"),
-    (548,  "AFP"),
-    (554,  "RTSP"),
+    (22, "SSH"),
+    (23, "Telnet"),
+    (53, "DNS"),
+    (80, "HTTP"),
+    (443, "HTTPS"),
+    (445, "SMB"),
+    (548, "AFP"),
+    (554, "RTSP"),
     (3389, "RDP"),
     (8080, "HTTP-alt"),
     (8443, "HTTPS-alt"),
@@ -144,7 +144,7 @@ async fn arp_scan(
 
     let (mut tx, mut rx) = match datalink::channel(&iface, Default::default()) {
         Ok(datalink::Channel::Ethernet(t, r)) => (t, r),
-        Ok(_)  => anyhow::bail!("Unexpected channel type"),
+        Ok(_) => anyhow::bail!("Unexpected channel type"),
         Err(e) => anyhow::bail!("Failed to open datalink channel: {}", e),
     };
 
@@ -178,11 +178,19 @@ async fn arp_scan(
         while std::time::Instant::now() < deadline {
             match rx.next() {
                 Ok(pkt) => {
-                    let Some(eth) = EthernetPacket::new(pkt) else { continue };
-                    if eth.get_ethertype() != EtherTypes::Arp { continue; }
-                    let Some(arp) = ArpPacket::new(eth.payload()) else { continue };
-                    if arp.get_operation() != ArpOperations::Reply { continue; }
-                    let ip  = arp.get_sender_proto_addr();
+                    let Some(eth) = EthernetPacket::new(pkt) else {
+                        continue;
+                    };
+                    if eth.get_ethertype() != EtherTypes::Arp {
+                        continue;
+                    }
+                    let Some(arp) = ArpPacket::new(eth.payload()) else {
+                        continue;
+                    };
+                    if arp.get_operation() != ArpOperations::Reply {
+                        continue;
+                    }
+                    let ip = arp.get_sender_proto_addr();
                     let mac = arp.get_sender_hw_addr().to_string();
                     if !found.iter().any(|(i, _)| *i == ip) {
                         found.push((ip, mac));
@@ -212,12 +220,12 @@ async fn enrich_device(ip: Ipv4Addr, mac: String) -> Device {
             let addr = SocketAddr::new(IpAddr::V4(ip), *port);
             let (port, service) = (*port, *service);
             tokio::spawn(async move {
-                let ok = tokio::time::timeout(
-                    Duration::from_millis(300),
-                    TcpStream::connect(addr),
-                )
-                .await;
-                matches!(ok, Ok(Ok(_))).then_some(PortService { port, service: service.into() })
+                let ok = tokio::time::timeout(Duration::from_millis(300), TcpStream::connect(addr))
+                    .await;
+                matches!(ok, Ok(Ok(_))).then_some(PortService {
+                    port,
+                    service: service.into(),
+                })
             })
         })
         .collect();
@@ -237,51 +245,61 @@ async fn enrich_device(ip: Ipv4Addr, mac: String) -> Device {
         vendor: Some(oui_lookup(&mac)),
         open_ports,
         first_seen: now,
-        last_seen:  now,
+        last_seen: now,
     }
 }
 
 fn expand_cidr(cidr: &str) -> Result<Vec<Ipv4Addr>> {
     let parts: Vec<&str> = cidr.split('/').collect();
-    if parts.len() != 2 { anyhow::bail!("Invalid CIDR: {}", cidr); }
+    if parts.len() != 2 {
+        anyhow::bail!("Invalid CIDR: {}", cidr);
+    }
     let base: Ipv4Addr = parts[0].parse()?;
-    let prefix: u32    = parts[1].parse()?;
-    let base_u32       = u32::from(base);
-    let mask           = if prefix == 0 { 0 } else { !0u32 << (32 - prefix) };
-    let network        = base_u32 & mask;
-    let broadcast      = network | !mask;
+    let prefix: u32 = parts[1].parse()?;
+    let base_u32 = u32::from(base);
+    let mask = if prefix == 0 {
+        0
+    } else {
+        !0u32 << (32 - prefix)
+    };
+    let network = base_u32 & mask;
+    let broadcast = network | !mask;
     Ok((network + 1..broadcast).map(Ipv4Addr::from).collect())
 }
 
 fn oui_lookup(mac: &str) -> String {
-    let prefix: String = mac.split(':').take(3)
-        .map(|s| s.to_uppercase()).collect::<Vec<_>>().join(":");
+    let prefix: String = mac
+        .split(':')
+        .take(3)
+        .map(|s| s.to_uppercase())
+        .collect::<Vec<_>>()
+        .join(":");
     match prefix.as_str() {
-        "DC:A6:32"|"B8:27:EB"|"E4:5F:01"|"28:CD:C1"|"D8:3A:DD" => "Raspberry Pi".into(),
-        "AC:DE:48"|"00:03:93"|"00:0A:27"|"3C:22:FB"|"F0:18:98"
-        |"00:17:F2"|"A4:C3:F0"|"F4:F1:5A"|"8C:85:90"|"DC:2B:2A"
-        |"3C:06:30"|"B8:8D:12"|"18:65:90"|"AC:87:A3"|"F0:DB:F8"
-        |"98:01:A7"|"28:CF:E9"|"70:73:CB"|"A8:51:AB" => "Apple".into(),
-        "00:12:47"|"00:15:99"|"00:17:C9"|"2C:44:01"|"8C:77:12"
-        |"50:85:69"|"CC:07:AB"|"F4:7B:5E"|"40:0E:85" => "Samsung".into(),
-        "00:1A:11"|"54:EE:75"|"00:1D:7E"|"F4:F5:D8"|"48:D6:D5"
-        |"20:DF:B9"|"A4:77:33"|"18:B4:30" => "Google/Nest".into(),
-        "68:37:E9"|"FC:65:DE"|"74:C2:46"|"40:B4:CD"|"A4:08:F5"
-        |"B4:7C:9C"|"44:65:0D" => "Amazon".into(),
-        "00:50:56"|"00:0C:29"|"00:1C:14" => "VMware".into(),
+        "DC:A6:32" | "B8:27:EB" | "E4:5F:01" | "28:CD:C1" | "D8:3A:DD" => "Raspberry Pi".into(),
+        "AC:DE:48" | "00:03:93" | "00:0A:27" | "3C:22:FB" | "F0:18:98" | "00:17:F2"
+        | "A4:C3:F0" | "F4:F1:5A" | "8C:85:90" | "DC:2B:2A" | "3C:06:30" | "B8:8D:12"
+        | "18:65:90" | "AC:87:A3" | "F0:DB:F8" | "98:01:A7" | "28:CF:E9" | "70:73:CB"
+        | "A8:51:AB" => "Apple".into(),
+        "00:12:47" | "00:15:99" | "00:17:C9" | "2C:44:01" | "8C:77:12" | "50:85:69"
+        | "CC:07:AB" | "F4:7B:5E" | "40:0E:85" => "Samsung".into(),
+        "00:1A:11" | "54:EE:75" | "00:1D:7E" | "F4:F5:D8" | "48:D6:D5" | "20:DF:B9"
+        | "A4:77:33" | "18:B4:30" => "Google/Nest".into(),
+        "68:37:E9" | "FC:65:DE" | "74:C2:46" | "40:B4:CD" | "A4:08:F5" | "B4:7C:9C"
+        | "44:65:0D" => "Amazon".into(),
+        "00:50:56" | "00:0C:29" | "00:1C:14" => "VMware".into(),
         "08:00:27" => "VirtualBox".into(),
-        "50:C7:BF"|"B0:BE:76"|"54:A7:03"|"98:DA:C4"|"8C:8D:28"
-        |"EC:08:6B"|"60:32:B1"|"14:CC:20"|"D8:07:B6" => "TP-Link".into(),
-        "00:1A:92"|"04:92:26"|"10:BF:48"|"2C:FD:A1"|"30:85:A9"
-        |"4C:ED:FB"|"60:45:CB"|"88:D7:F6"|"AC:22:0B"|"BC:AE:C5" => "ASUS".into(),
-        "00:09:5B"|"00:14:6C"|"00:18:4D"|"00:1B:2F"|"00:1E:2A"
-        |"20:4E:7F"|"28:80:88"|"30:46:9A"|"6C:B0:CE"|"9C:3D:CF" => "Netgear".into(),
+        "50:C7:BF" | "B0:BE:76" | "54:A7:03" | "98:DA:C4" | "8C:8D:28" | "EC:08:6B"
+        | "60:32:B1" | "14:CC:20" | "D8:07:B6" => "TP-Link".into(),
+        "00:1A:92" | "04:92:26" | "10:BF:48" | "2C:FD:A1" | "30:85:A9" | "4C:ED:FB"
+        | "60:45:CB" | "88:D7:F6" | "AC:22:0B" | "BC:AE:C5" => "ASUS".into(),
+        "00:09:5B" | "00:14:6C" | "00:18:4D" | "00:1B:2F" | "00:1E:2A" | "20:4E:7F"
+        | "28:80:88" | "30:46:9A" | "6C:B0:CE" | "9C:3D:CF" => "Netgear".into(),
         "00:11:32" => "Synology".into(),
-        "00:9E:C8"|"04:CF:8C"|"10:2A:B3"|"28:6C:07"|"34:CE:00"
-        |"50:8F:4C"|"58:44:98"|"64:09:80"|"64:CC:2E"|"74:23:44"
-        |"78:11:DC"|"8C:BE:BE"|"98:FA:E3"|"AC:F7:F3"|"F4:8B:32" => "Xiaomi".into(),
-        "00:13:A9"|"00:1A:80"|"00:1D:0D"|"00:24:BE"|"04:98:F3"
-        |"30:17:C8"|"AC:9B:0A"|"FC:0F:E6" => "Sony".into(),
+        "00:9E:C8" | "04:CF:8C" | "10:2A:B3" | "28:6C:07" | "34:CE:00" | "50:8F:4C"
+        | "58:44:98" | "64:09:80" | "64:CC:2E" | "74:23:44" | "78:11:DC" | "8C:BE:BE"
+        | "98:FA:E3" | "AC:F7:F3" | "F4:8B:32" => "Xiaomi".into(),
+        "00:13:A9" | "00:1A:80" | "00:1D:0D" | "00:24:BE" | "04:98:F3" | "30:17:C8"
+        | "AC:9B:0A" | "FC:0F:E6" => "Sony".into(),
         _ => "Unknown".into(),
     }
 }

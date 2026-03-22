@@ -19,6 +19,7 @@ A lightweight LAN device monitor built in Rust. Discovers all devices on your ne
 - Docker + Docker Compose v2
 - Linux host (required for `network_mode: host` and raw packet capture)
 - MaxMind GeoLite2 database files (free, see below)
+- Synology NAS users should run the container as `root` with `privileged: true`
 
 ---
 
@@ -173,7 +174,7 @@ Bannkenn-Home/
 ## Notes
 
 - `network_mode: host` is required — bridge mode hides most LAN traffic from the container.
-- `NET_ADMIN` + `NET_RAW` capabilities are required for ARP scanning and raw packet capture.
-- The container runs as a non-root user (uid 1001); capabilities are granted to the binary via `setcap`.
+- On Synology, raw packet sockets are not reliable with only `NET_ADMIN` / `NET_RAW`. Run the container as `root` with `privileged: true`.
+- The provided compose files use `user: "0:0"` so ARP scanning and libpcap can open `AF_PACKET` sockets consistently.
 - The host machine running the monitor is automatically included in the device list.
 - Devices that stop responding to ARP show a gray dot but remain in the list indefinitely.

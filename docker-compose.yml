@@ -7,10 +7,11 @@ services:
     restart: unless-stopped
 
     # Required for ARP scan and raw packet capture
-    # privileged is needed on Synology — AppArmor/seccomp block AF_PACKET
-    # raw sockets even when NET_RAW cap is granted.
+    # Synology needs the process to run as root inside a privileged container.
+    # The non-root + file capability model is not reliable there for AF_PACKET.
     network_mode: host
     privileged: true
+    user: "0:0"
 
     environment:
       - INTERFACE=${INTERFACE:-eth0}

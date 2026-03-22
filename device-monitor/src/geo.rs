@@ -50,7 +50,10 @@ impl GeoDb {
             };
         }
 
-        let mut info = GeoInfo { is_private: false, ..Default::default() };
+        let mut info = GeoInfo {
+            is_private: false,
+            ..Default::default()
+        };
 
         if let Some(reader) = &self.country {
             if let Ok(rec) = reader.lookup::<geoip2::Country>(ip) {
