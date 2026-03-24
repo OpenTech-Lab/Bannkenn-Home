@@ -132,7 +132,7 @@ Any standard WiFi router (tested example: Buffalo WSR-3600BE4P or equivalent).
 Any of the following:  
 - Mini PC  
 - Raspberry Pi  
-- NAS with Docker support  
+- Device with Docker support  
 - Laptop  
 
 **WiFi Adapter**  
