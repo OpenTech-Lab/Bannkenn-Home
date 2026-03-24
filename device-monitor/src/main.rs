@@ -13,7 +13,7 @@ use tracing_subscriber::EnvFilter;
 
 use api::{build_router, collect_alerts, AppState};
 use capture::{evict_old_flows, new_flow_map, run_capture};
-use discovery::{new_device_map, run_scan_loop};
+use discovery::{load_device_map, run_scan_loop};
 use geo::GeoDb;
 use labels::LabelStore;
 
@@ -30,6 +30,8 @@ async fn main() -> Result<()> {
     let geo_dir = std::env::var("GEO_DATA_DIR").unwrap_or_else(|_| "/data".into());
     let labels_file =
         std::env::var("LABELS_FILE").unwrap_or_else(|_| format!("{}/labels.json", geo_dir));
+    let devices_file =
+        std::env::var("DEVICES_FILE").unwrap_or_else(|_| format!("{}/devices.json", geo_dir));
     let scan_interval: u64 = std::env::var("SCAN_INTERVAL")
         .unwrap_or_else(|_| "30".into())
         .parse()
@@ -48,7 +50,7 @@ async fn main() -> Result<()> {
     let geo = Arc::new(GeoDb::load(&geo_dir));
     let labels = LabelStore::load(&labels_file);
 
-    let devices = new_device_map();
+    let devices = load_device_map(&devices_file);
     let flows = new_flow_map();
     let alerts_store = Arc::new(RwLock::new(Vec::new()));
     let (alert_tx, alert_rx) = broadcast::channel::<models::Alert>(256);
@@ -59,6 +61,7 @@ async fn main() -> Result<()> {
         subnet.clone(),
         devices.clone(),
         scan_interval,
+        Some(std::path::PathBuf::from(&devices_file)),
     ));
 
     // Packet capture

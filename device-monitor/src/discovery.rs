@@ -7,6 +7,7 @@ use pnet::packet::ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket};
 use pnet::packet::Packet;
 use pnet::util::MacAddr;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -17,8 +18,36 @@ use crate::models::{Device, PortService};
 
 pub type DeviceMap = Arc<RwLock<Vec<Device>>>;
 
-pub fn new_device_map() -> DeviceMap {
-    Arc::new(RwLock::new(Vec::new()))
+/// Load persisted devices from a JSON file (if it exists).
+pub fn load_device_map(path: &str) -> DeviceMap {
+    let devices = if std::path::Path::new(path).exists() {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<Vec<Device>>(&s).ok())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    info!("Loaded {} persisted device(s) from {}", devices.len(), path);
+    Arc::new(RwLock::new(devices))
+}
+
+async fn persist_devices(devices: &[Device], path: &Path) {
+    match serde_json::to_string_pretty(devices) {
+        Ok(json) => {
+            let tmp = path.with_extension("tmp");
+            let tmp2 = tmp.clone();
+            let path2 = path.to_path_buf();
+            tokio::task::spawn_blocking(move || {
+                if std::fs::write(&tmp2, &json).is_ok() {
+                    if let Err(e) = std::fs::rename(&tmp2, &path2) {
+                        warn!("Failed to save devices: {}", e);
+                    }
+                }
+            });
+        }
+        Err(e) => warn!("Failed to serialize devices: {}", e),
+    }
 }
 
 const PROBE_PORTS: &[(u16, &str)] = &[
@@ -39,23 +68,25 @@ const PROBE_PORTS: &[(u16, &str)] = &[
 /// Runs ARP scan repeatedly every `interval_secs`.
 /// First scan fires immediately. Known devices (matched by MAC) get their
 /// `last_seen` and `ip` updated; genuinely new devices get full enrichment.
+/// If `devices_file` is set, the device list is persisted after every change.
 pub async fn run_scan_loop(
     interface_name: String,
     subnet: String,
     devices: DeviceMap,
     interval_secs: u64,
+    devices_file: Option<PathBuf>,
 ) {
     let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         ticker.tick().await;
-        if let Err(e) = scan_once(&interface_name, &subnet, devices.clone()).await {
+        if let Err(e) = scan_once(&interface_name, &subnet, devices.clone(), devices_file.as_deref()).await {
             warn!("Scan error: {}", e);
         }
     }
 }
 
-async fn scan_once(interface_name: &str, subnet: &str, devices: DeviceMap) -> Result<()> {
+async fn scan_once(interface_name: &str, subnet: &str, devices: DeviceMap, devices_file: Option<&Path>) -> Result<()> {
     debug!("Starting ARP scan on {}...", subnet);
     let (host_ip, host_mac, mut raw) = arp_scan(interface_name, subnet).await?;
 
@@ -70,6 +101,7 @@ async fn scan_once(interface_name: &str, subnet: &str, devices: DeviceMap) -> Re
 
     let now = Utc::now();
     let mut to_enrich: Vec<(Ipv4Addr, String)> = Vec::new();
+    let mut changed = false;
 
     {
         let mut map = devices.write().await;
@@ -81,10 +113,18 @@ async fn scan_once(interface_name: &str, subnet: &str, devices: DeviceMap) -> Re
                 if ip_changed {
                     info!("Device {} IP changed: {} → {}", dev.mac, dev.ip, ip);
                     dev.ip = *ip;
+                    changed = true;
                 }
             } else {
                 // New device — schedule enrichment
                 to_enrich.push((*ip, mac.clone()));
+            }
+        }
+
+        // Persist last_seen updates for known devices
+        if changed {
+            if let Some(path) = devices_file {
+                persist_devices(&map, path).await;
             }
         }
     }
@@ -110,8 +150,16 @@ async fn scan_once(interface_name: &str, subnet: &str, devices: DeviceMap) -> Re
                 dev.open_ports.iter().map(|p| p.port).collect::<Vec<_>>(),
             );
             map.push(dev);
+            changed = true;
         }
     }
+
+    if changed {
+        if let Some(path) = devices_file {
+            persist_devices(&map, path).await;
+        }
+    }
+
     Ok(())
 }
 
