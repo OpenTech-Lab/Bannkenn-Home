@@ -19,7 +19,7 @@ A lightweight LAN device monitor built in Rust. Discovers all devices on your ne
 - Docker + Docker Compose v2
 - Linux host (required for `network_mode: host` and raw packet capture)
 - MaxMind GeoLite2 database files (free, see below)
-- Synology NAS users should run the container as `root` with `privileged: true`
+- Device users should run the container as `root` with `privileged: true`
 
 ---
 
