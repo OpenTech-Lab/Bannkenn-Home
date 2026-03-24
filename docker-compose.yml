@@ -15,7 +15,7 @@ services:
 
     environment:
       - INTERFACE=${INTERFACE:-eth0}
-      - SUBNET=${SUBNET:-192.168.11.0/24}
+      - SUBNET=${SUBNET:-192.168.1.0/24}
       - PORT=8080
       - GEO_DATA_DIR=/data
       - SCAN_INTERVAL=${SCAN_INTERVAL:-30}
